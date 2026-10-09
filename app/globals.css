@@ -54,3 +54,6 @@ input[type="range"] { touch-action: pan-y; accent-color: #c08a3a; }
 .adv { margin: 10px 0 4px; border-top: 1px solid #3a3122; padding-top: 6px; }
 .adv summary { cursor: pointer; color: #d9c7a0; font-size: 12px; }
 .adv .note { margin: 4px 0; }
+.knob3 { margin: 2px 0 6px; }
+.knob3 .lab { display: block; font-size: 12px; color: #cbb; margin-bottom: 2px; }
+.knob3 .views { margin-bottom: 4px; }

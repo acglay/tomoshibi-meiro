@@ -1,7 +1,6 @@
 // A plain test player for check.mjs (difficulty / stuck / determinism gauge, not a fun score):
 // walk to the nearest pellet avoiding tiles near ghosts, release the stored light when a ghost gets close.
 import { Game, DX, DY, OPEN } from "./game";
-import { T } from "./tuning";
 
 let stuck = 0;
 
@@ -16,7 +15,7 @@ export function botStep(g: Game, opts = { danger: 2, burstAt: 3.5, dt: 1 / 30 })
     const [x, y] = g.pos(e);
     close = Math.min(close, Math.hypot(x - ppx, y - ppy));
   }
-  if (close < opts.burstAt && g.charge >= T.BURST_MIN) g.input.burst = true;
+  if (close < opts.burstAt && g.charge >= g.burstMin()) g.input.burst = true;
   const danger = new Uint8Array(W * H);
   for (const e of out) {
     const [ex, ey] = g.near(e);
@@ -52,7 +51,7 @@ export function botStep(g: Game, opts = { danger: 2, burstAt: 3.5, dt: 1 / 30 })
   let dir = first(true);
   stuck = dir < 0 ? stuck + opts.dt : 0;
   // no safe road: push through anyway with a light to release, or after dithering for a while
-  if (dir < 0 && (g.charge >= T.BURST_MIN || stuck > 5)) dir = first(false);
+  if (dir < 0 && (g.charge >= g.burstMin() || stuck > 5)) dir = first(false);
   if (dir < 0) {
     // cornered: step to the neighbor farthest from the ghosts
     let best = -1e9;

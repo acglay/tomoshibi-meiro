@@ -1,4 +1,4 @@
-import { T } from "./tuning";
+import { T, KNOBS, KNOB_DEFAULT, KnobKey } from "./tuning";
 import { Batch, Frame, PROBE_N } from "./rc";
 
 type V3 = [number, number, number];
@@ -98,6 +98,7 @@ export class Game {
   onToast: (text: string, color?: string) => void = () => {};
   onStage: (s: number) => void = () => {};
   input: Input = { want: -1, burst: false };
+  knobs = Object.fromEntries(KNOBS.map((k, i) => [k.key, k.vals[KNOB_DEFAULT[i]]])) as Record<KnobKey, number>;
 
   scene = new Batch();
   lit = new Batch();
@@ -366,6 +367,10 @@ export class Game {
     }
   }
 
+  burstMin() {
+    return Math.round(this.knobs.chargeMax / 6);
+  }
+
   ghostSpeed() {
     const dark = 1 - this.pelletsLeft / Math.max(1, this.pelletsTotal);
     return Math.min(T.GHOST_SPEED_MAX, T.GHOST_SPEED + T.GHOST_SPEED_DARK * dark + T.GHOST_SPEED_PER_STAGE * (this.stage - 1));
@@ -455,7 +460,7 @@ export class Game {
     // a lit pellet ahead: stop and blow it out first
     const ni = (g.ty + DY[best]) * W + g.tx + DX[best];
     if (this.pellet[ni] === 1) {
-      g.blow = T.GHOST_BLOW_SEC;
+      g.blow = this.knobs.blowSec;
       g.blowAt = ni;
       return -1;
     }
@@ -463,8 +468,8 @@ export class Game {
   }
 
   burst() {
-    if (this.charge < T.BURST_MIN) return false;
-    const k = Math.min(1, this.charge / T.CHARGE_MAX);
+    if (this.charge < this.burstMin()) return false;
+    const k = this.charge / T.CHARGE_REF;
     const kg = Math.pow(k, T.BURST_GAMMA);
     const [x, y] = this.pos(this.p);
     const wx = x * T.TILE;
@@ -543,7 +548,7 @@ export class Game {
         this.pellet[i] = 0;
         this.pelletsLeft--;
         this.score += pw ? T.SCORE_POWER : T.SCORE_PELLET;
-        this.charge = Math.min(T.CHARGE_MAX, this.charge + (pw ? T.CHARGE_PER_POWER : kind === 3 ? T.CHARGE_PER_DARK : T.CHARGE_PER_PELLET));
+        this.charge = Math.min(this.knobs.chargeMax, this.charge + (pw ? T.CHARGE_PER_POWER : kind === 3 ? T.CHARGE_PER_DARK : T.CHARGE_PER_PELLET));
         if (pw) this.onToast("おおきな ひかり! ともしびが まんたん", "#ffd890");
         if (this.pelletsLeft <= 0) {
           this.clearing = T.CLEAR_SEC;
@@ -606,7 +611,7 @@ export class Game {
           g.dir = REV[g.dir];
         }
       }
-      const sp = gs * (g.lum >= T.GHOST_FEAR ? T.GHOST_LIGHT_SLOW : 1) * (1 - (1 - T.GHOST_SLOW_IN_LIGHT) * g.burn);
+      const sp = gs * (g.lum >= T.GHOST_FEAR ? this.knobs.lightSlow : 1) * (1 - (1 - T.GHOST_SLOW_IN_LIGHT) * g.burn);
       this.advance(g, sp * dt, (m) => this.ghostDecide(m as Ghost));
       const [gx, gy] = this.pos(g);
       if (Math.hypot(gx - ppx, gy - ppy) < T.HIT_DIST) { this.die(); break; }
@@ -751,9 +756,10 @@ export class Game {
       const x = gx * TL;
       const y = (gy + (g.state === "pen" ? Math.sin(t * 4 + g.id) * 0.12 : 0)) * TL;
       const r = TL * 0.42;
-      const fx = g.flash > 0 ? 1.5 : 0;
+      const fx = (g.flash > 0 ? 1.5 : 0) + this.knobs.see * 0.45;
       if (g.state !== "eyes") {
         if (g.burn > 0.05) G.circle(x, y, r, 0.7, 0.3, 1, 0.6 * g.burn, 8);
+        if (this.knobs.see > 0) G.circle(x, y, r * 0.9, g.c[0], g.c[1], g.c[2], 0.12 * this.knobs.see, 5);
         L.circle(x, y - r * 0.2, r * 0.8, g.c[0] * 0.6, g.c[1] * 0.6, g.c[2] * 0.6, 0.95, 0, fx);
         L.push(x, y + r * 0.35, r * 0.8, r * 0.45, 0, 1, 0, fx, g.c[0] * 0.6, g.c[1] * 0.6, g.c[2] * 0.6, 0.95);
         for (let k = -1; k <= 1; k++) L.circle(x + k * r * 0.55, y + r * 0.8 + Math.sin(t * 10 + k + g.id) * 1, r * 0.22, g.c[0] * 0.6, g.c[1] * 0.6, g.c[2] * 0.6, 0.95, 0, fx);
@@ -773,13 +779,13 @@ export class Game {
       const x = px * TL;
       const y = py * TL;
       const r = TL * 0.4;
-      const ck = this.charge / T.CHARGE_MAX;
+      const ck = Math.min(1, this.charge / T.CHARGE_REF);
       L.circle(x, y, r, 1, 0.85, 0.4, 1, 0, 0.6 + ck * 1.2);
       const open = 0.5 + 0.5 * Math.sin(this.mouth);
       const f = this.face;
       L.circle(x + DX[f] * r * 0.75, y + DY[f] * r * 0.75, r * 0.5 * open, 0, 0, 0, 1);
       G.circle(x, y, r * 0.8, 1, 0.75, 0.35, 0.25 + 0.5 * ck, 4 + 10 * ck);
-      if (this.charge >= T.BURST_MIN) G.circle(x, y, r + 3 + 2 * Math.sin(t * 6), 1, 0.85, 0.5, 0.25 + 0.35 * ck, 2);
+      if (this.charge >= this.burstMin()) G.circle(x, y, r + 3 + 2 * Math.sin(t * 6), 1, 0.85, 0.5, 0.25 + 0.35 * ck, 2);
     }
 
     this.lightCount = lights;

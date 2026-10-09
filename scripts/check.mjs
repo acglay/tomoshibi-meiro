@@ -96,7 +96,7 @@ out.b = await page.evaluate(async () => {
           if (g.lumAt(nx, ny) >= 4) wallTicks++;
           if (q.burn > 0.01) burnTicks++;
           if (q.blow <= 0) {
-            const band = q.lum >= 0.4 ? "dim" : "dark";
+            const band = q.lum >= 0.2 ? "dim" : "dark";
             sp[band][0] += Math.hypot(p[0] - prev[k][0], p[1] - prev[k][1]);
             sp[band][1] += dt;
           }

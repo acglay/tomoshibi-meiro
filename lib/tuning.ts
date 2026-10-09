@@ -33,8 +33,8 @@ export const T = {
   CHARGE_PER_PELLET: 1,
   CHARGE_PER_POWER: 30, // a power pellet fills it
   CHARGE_PER_DARK: 0, // a pellet a ghost blew out: still has to be eaten, gives no light
-  CHARGE_MAX: 30,
-  BURST_MIN: 5, // charge needed to release
+  // CHARGE_MAX / BURST_MIN / GHOST_LIGHT_SLOW / GHOST_BLOW_SEC live in KNOBS below (switchable in ⚙)
+  CHARGE_REF: 30, // burst strength k = charge / CHARGE_REF: a bigger container (chargeMax) gives a bigger full burst
   BURST_E: 220, // emission at full charge (scales as (charge/max)^BURST_GAMMA)
   BURST_E_MIN: 25,
   BURST_GAMMA: 1.3,
@@ -54,10 +54,8 @@ export const T = {
   GHOST_RELEASE_SEC: 3, // between leaving the pen
   GHOST_RESPAWN_SEC: 5, // after being burned, wait in the pen
   // light levels (tier3): pellet tile ~2.7, 1 pellet next door ~0.25, 2 ~0.5, power pellet ~7-11
-  GHOST_FEAR: 0.4, // dim light (pellets) above this: ghosts walk slowly (GHOST_LIGHT_SLOW)
+  GHOST_FEAR: 0.2, // dim light above this: ghosts walk slowly (knob lightSlow). One lit pellet next door (~0.25) counts; plain dark is mostly < 0.15
   GHOST_WALL: 4, // strong light (burst, ember, power pellet) above this: ghosts will not enter, and flee if caught in it
-  GHOST_LIGHT_SLOW: 0.45, // speed multiplier in dim light
-  GHOST_BLOW_SEC: 0.5, // a ghost stops this long to blow out the pellet ahead (it stays as a dark pellet)
   GHOST_BURN: 1.5, // light where ghosts start to burn (full at 3x). Ghosts never stand on a lit pellet (they blow it out first), so pellets stay below this
   GHOST_BURN_DPS: 5, // hp/s at full burn (hp = 1)
   GHOST_SLOW_IN_LIGHT: 0.5, // speed multiplier while burning
@@ -67,3 +65,13 @@ export const T = {
   DEATH_SEC: 1.2,
   CLEAR_SEC: 1.6,
 };
+
+// knobs to compare on the device: ⚙ あそびの調整, 3 steps each (index 1 = the current value)
+export type KnobKey = "chargeMax" | "lightSlow" | "blowSec" | "see";
+export const KNOBS: { key: KnobKey; name: string; title: string; vals: number[]; labels: string[] }[] = [
+  { key: "chargeMax", name: "ためる器", title: "ともしびの上限。大きいほど満タンの閃光が強く遠くまで届く(放てるのは上限の1/6から)", vals: [15, 30, 60], labels: ["小さく", "今", "大きく"] },
+  { key: "lightSlow", name: "光の足どめ", title: "エサの光の中でおばけが遅くなる度合い(速さの倍率)", vals: [0.7, 0.45, 0.2], labels: ["弱く", "今", "強く"] },
+  { key: "blowSec", name: "吹き消す時間", title: "おばけがエサの火を消すまでためらう秒数", vals: [0.25, 0.5, 1], labels: ["短く", "今", "長く"] },
+  { key: "see", name: "おばけの見え方", title: "暗がりでのおばけの見えやすさ", vals: [0, 1, 2], labels: ["目だけ", "うっすら", "はっきり"] },
+];
+export const KNOB_DEFAULT = [1, 1, 1, 0];

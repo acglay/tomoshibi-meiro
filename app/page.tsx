@@ -4,14 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { Game } from "@/lib/game";
 import { botStep } from "@/lib/bot";
 import { RC } from "@/lib/rc";
-import { T } from "@/lib/tuning";
+import { T, KNOBS, KNOB_DEFAULT } from "@/lib/tuning";
 import { AutoPerf, TIERS, guessTier, isMobile } from "@/lib/perf";
 import { captureHubToken, hubToken, hubLoad, hubSave, HUB_URL } from "@/lib/hub-client";
 
 const BEST_KEY = "tomoshibi-meiro-best-v1";
 const SET_KEY = "tomoshibi-meiro-settings-v1";
 const PERF_KEY = "tomoshibi-meiro-perf-v1";
-const DEF = { perf: -1 }; // -1 = auto, 0..4 = fixed tier
+const DEF = { perf: -1, knobs: KNOB_DEFAULT }; // perf: -1 = auto, 0..4 = fixed tier. knobs: index into KNOBS[i].vals
 const HUD_CSS = 54; // css px kept free above the maze
 
 type Toast = { id: number; text: string; color: string };
@@ -253,6 +253,7 @@ export default function Page() {
         ng.onToast = () => {};
         ng.onStage = () => {};
         ng.input = g.input;
+        ng.knobs = g.knobs;
         Object.assign(g, ng);
       },
     };
@@ -270,6 +271,7 @@ export default function Page() {
   useEffect(() => {
     localStorage.setItem(SET_KEY, JSON.stringify(settings));
     applyTierRef.current?.(settings.perf);
+    if (gameRef.current) applyKnobs(gameRef.current, settings.knobs);
   }, [settings]);
 
   useEffect(() => {
@@ -282,6 +284,7 @@ export default function Page() {
     g.onToast = old.onToast;
     g.onStage = old.onStage;
     g.input = old.input;
+    g.knobs = old.knobs;
     Object.assign(old, g);
     setOver(null);
   };
@@ -315,6 +318,17 @@ export default function Page() {
             ))}
           </div>
           <div className="diag">診断: {tierView.diag}</div>
+          <div className="ptitle2">あそびの調整 <span className="pnow">(すぐ効く・ためしてみて)</span></div>
+          {KNOBS.map((k, ki) => (
+            <div key={k.key} className="knob3" title={k.title}>
+              <span className="lab">{k.name}</span>
+              <div className="views">
+                {k.labels.map((l, vi) => (
+                  <button key={l} className={(settings.knobs?.[ki] ?? KNOB_DEFAULT[ki]) === vi ? "on" : ""} onClick={() => setSettings((s) => { const kn = [...(s.knobs ?? KNOB_DEFAULT)]; kn[ki] = vi; return { ...s, knobs: kn }; })}>{l}</button>
+                ))}
+              </div>
+            </div>
+          ))}
           <p className="note">ひかりの計算: Radiance Cascades。エサが何百あっても計算量はほぼ一定。おばけは画面と同じ光の計算結果を読んで動く。</p>
         </div>
       )}
@@ -359,15 +373,19 @@ export default function Page() {
 
 // DOM HUD, touched only when a value changes
 const hudSeen = { key: "" };
+function applyKnobs(g: Game, idx: number[] | undefined) {
+  KNOBS.forEach((k, i) => { g.knobs[k.key] = k.vals[idx?.[i] ?? KNOB_DEFAULT[i]]; });
+  hudSeen.key = "";
+}
 function drawHud(el: HTMLDivElement, g: Game) {
-  const key = `${g.score}/${g.charge}/${g.stage}/${g.lives}/${g.pelletsLeft}`;
+  const key = `${g.score}/${g.charge}/${g.stage}/${g.lives}/${g.pelletsLeft}/${g.knobs.chargeMax}`;
   if (key === hudSeen.key) return;
   hudSeen.key = key;
   (el.children[0] as HTMLElement).textContent = String(g.score);
   const bar = el.children[1] as HTMLElement;
   const fill = bar.children[0] as HTMLElement;
-  fill.style.width = `${(100 * g.charge) / T.CHARGE_MAX}%`;
-  fill.className = g.charge >= T.BURST_MIN ? "ready" : "";
-  (bar.children[1] as HTMLElement).style.left = `${(100 * T.BURST_MIN) / T.CHARGE_MAX}%`;
+  fill.style.width = `${(100 * g.charge) / g.knobs.chargeMax}%`;
+  fill.className = g.charge >= g.burstMin() ? "ready" : "";
+  (bar.children[1] as HTMLElement).style.left = `${(100 * g.burstMin()) / g.knobs.chargeMax}%`;
   (el.children[2] as HTMLElement).textContent = `ステージ ${g.stage}   ${"●".repeat(Math.max(0, Math.min(9, g.lives)))}   のこり ${g.pelletsLeft}`;
 }

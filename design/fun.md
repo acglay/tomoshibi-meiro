@@ -20,7 +20,7 @@
 - 1面 = エサを全部食べたらクリア。最後の数個は真っ暗な迷路で取りに行くことになる。
 
 ## 3. つまみ
-`lib/tuning.ts`: PELLET_E / POWER_E(エサの光)、GHOST_FEAR / GHOST_BURN / GHOST_BURN_DPS(おばけと光)、CHARGE_PER_PELLET / CHARGE_MAX / BURST_MIN / BURST_E / EMBER_SEC(ためて解放)、PLAYER_SPEED / GHOST_SPEED / GHOST_SPEED_PER_STAGE(速さ)、FOG / BOUNCE(光の届き方)。
+`lib/tuning.ts`: PELLET_E / POWER_E(エサの光)、GHOST_FEAR / GHOST_WALL / GHOST_BURN / GHOST_BURN_DPS(おばけと光)、CHARGE_PER_PELLET / CHARGE_REF / BURST_E / EMBER_SEC(ためて解放)。**⚙「あそびの調整」で実機切替できるつまみ(`KNOBS`)**: ためる器(15/30/60)・光の足どめ(0.7/0.45/0.2)・吹き消す時間(0.25/0.5/1秒)・おばけの見え方(目だけ/うっすら/はっきり)、PLAYER_SPEED / GHOST_SPEED / GHOST_SPEED_PER_STAGE(速さ)、FOG / BOUNCE(光の届き方)。
 
 ## 4. ボットで見るもの(面白さの採点には使わない)
 - 詰みがないか(クリアできる面か)、難しさの目安(クリア率・平均生存時間)、決定性。数値を目的にしない。
@@ -29,3 +29,4 @@
 | 日付 | つまみ | 今 / 大きく / 小さく | 誰が触って | どう感じた |
 |---|---|---|---|---|
 | 2026-10-09 | おばけと光(GHOST_FEAR=壁 → GHOST_WALL=4・GHOST_LIGHT_SLOW=0.45・GHOST_BLOW_SEC=0.5・GHOST_BURN 0.9→1.5・BURST_E 140→220) | 明るい所に入れない → エサの光は足かせ(遅い)+エサの火を吹き消す、壁はつよい光だけ | パパ | 「アイディアは面白いけど ずっと閉じ込めておけるのがゲーム的に今一つ」→ 案C(吹き消す)+B(光は足かせ)を選択 |
+| 2026-10-09 | ⚙あそびの調整(KNOBS 4つ・3段) を追加。GHOST_FEAR 0.4→0.2(足どめが効いていなかった) | 原因 1 ためる判断がない・2 光が逃げ場にならない・4 おばけが見えない に対応するつまみ。今の値は真ん中(見え方だけ「目だけ」) | パパ | 「調整次第で面白いかも?まだあんま」→ 原因1・2・4を選択、⚙で3段切替を選択。実機で触り比べ待ち |
