@@ -35,7 +35,7 @@
 ## 運用
 - APP_ID = tomoshibi-meiro。localStorageキーは `tomoshibi-meiro-<用途>-v1`(best・settings・perf)
 - WebGLの `preserveDrawingBuffer` はPCでオン(smokeと📷のため)、スマホはオフ。スマホは毎フレーム `gl.finish()`、低い2段はバイリニア修正オフ
-- 区切りごとにcommit+push。公開: https://tomoshibi-meiro.vercel.app(GitHub連携=pushで自動デプロイ)。公開したら `hub/scripts/register-version.mjs` まで
+- 区切りごとにcommit+push。公開: https://tomoshibi-meiro.vercel.app(公開repo+GitHub連携=pushで自動デプロイ・hub登録済み 2026-10-09)。新版を出したら `hub/scripts/register-version.mjs` まで
 
 ## 未実装(M0の外)
 - 効果音・BGM / コントローラー / おばけの個性(待ち伏せ型など) / ステージごとの迷路の形の変化
