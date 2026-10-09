@@ -32,9 +32,10 @@ export const T = {
   // charge: eaten light is stored, then released as a burst
   CHARGE_PER_PELLET: 1,
   CHARGE_PER_POWER: 30, // a power pellet fills it
+  CHARGE_PER_DARK: 0, // a pellet a ghost blew out: still has to be eaten, gives no light
   CHARGE_MAX: 30,
   BURST_MIN: 5, // charge needed to release
-  BURST_E: 140, // emission at full charge (scales as (charge/max)^BURST_GAMMA)
+  BURST_E: 220, // emission at full charge (scales as (charge/max)^BURST_GAMMA)
   BURST_E_MIN: 25,
   BURST_GAMMA: 1.3,
   BURST_R: 9, // world px emitter radius at full charge
@@ -52,8 +53,12 @@ export const T = {
   GHOST_EYES_SPEED: 9,
   GHOST_RELEASE_SEC: 3, // between leaving the pen
   GHOST_RESPAWN_SEC: 5, // after being burned, wait in the pen
-  GHOST_FEAR: 0.4, // tile light above this: ghosts will not enter (and flee if caught in it). pellet tile ~2.7, 1 pellet next door ~0.25, 2 ~0.5
-  GHOST_BURN: 0.9, // light where ghosts start to burn (full at 3x)
+  // light levels (tier3): pellet tile ~2.7, 1 pellet next door ~0.25, 2 ~0.5, power pellet ~7-11
+  GHOST_FEAR: 0.4, // dim light (pellets) above this: ghosts walk slowly (GHOST_LIGHT_SLOW)
+  GHOST_WALL: 4, // strong light (burst, ember, power pellet) above this: ghosts will not enter, and flee if caught in it
+  GHOST_LIGHT_SLOW: 0.45, // speed multiplier in dim light
+  GHOST_BLOW_SEC: 0.5, // a ghost stops this long to blow out the pellet ahead (it stays as a dark pellet)
+  GHOST_BURN: 1.5, // light where ghosts start to burn (full at 3x). Ghosts never stand on a lit pellet (they blow it out first), so pellets stay below this
   GHOST_BURN_DPS: 5, // hp/s at full burn (hp = 1)
   GHOST_SLOW_IN_LIGHT: 0.5, // speed multiplier while burning
   GHOST_WANDER: 0.15, // chance to take a random dark turn instead of the shortest dark path

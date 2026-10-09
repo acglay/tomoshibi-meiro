@@ -17,7 +17,7 @@ type Mover = { tx: number; ty: number; dir: number; t: number }; // at tile (tx,
 export type GhostState = "pen" | "leave" | "out" | "eyes";
 export type Ghost = Mover & {
   id: number; state: GhostState; wait: number; hp: number; burn: number; lum: number;
-  c: V3; slot: number; flash: number; burnedBy: number;
+  c: V3; slot: number; flash: number; burnedBy: number; blow: number; blowAt: number;
 };
 type Spark = { x: number; y: number; vx: number; vy: number; life: number; max: number; c: V3 };
 type Light = { x: number; y: number; r: number; e: number; life: number; max: number; c: V3; kind: "flash" | "ember" };
@@ -57,7 +57,7 @@ export class Game {
   lumSerialSeen = 0;
   distExit: Int16Array = new Int16Array(0); // ghost BFS to the tile above the door
   distPen: Int16Array = new Int16Array(0); // ghost BFS to the pen center
-  distDark: Int32Array; // BFS from the player over dark tiles (recomputed every update)
+  distRoad: Int32Array; // BFS from the player over tiles the ghosts can walk (below GHOST_WALL), every update
   penX = 0;
   penY = 0;
   exitX = 0;
@@ -82,6 +82,7 @@ export class Game {
   lastBurstT = -1e9;
   burned = 0;
   deaths = 0;
+  blown = 0;
   time = 0;
   stageTime = 0;
   hitstop = 0;
@@ -109,7 +110,7 @@ export class Game {
     this.map = new Uint8Array(this.W * this.H);
     this.pellet = new Uint8Array(this.W * this.H);
     this.tileLum = new Float32Array(this.W * this.H);
-    this.distDark = new Int32Array(this.W * this.H);
+    this.distRoad = new Int32Array(this.W * this.H);
     this.newStage(1);
   }
 
@@ -360,7 +361,7 @@ export class Game {
       const slot = i % 4;
       this.ghosts.push({
         id: i, tx: this.penX - 1 + (slot % 3), ty: this.penY + (slot === 3 ? 1 : 0), dir: -1, t: 0,
-        state: "pen", wait: 1 + i * T.GHOST_RELEASE_SEC, hp: 1, burn: 0, lum: 0, c: GHOST_C[i % 4], slot, flash: 0, burnedBy: 0,
+        state: "pen", wait: 1 + i * T.GHOST_RELEASE_SEC, hp: 1, burn: 0, lum: 0, c: GHOST_C[i % 4], slot, flash: 0, burnedBy: 0, blow: 0, blowAt: -1,
       });
     }
   }
@@ -420,33 +421,43 @@ export class Game {
       }
       return best;
     }
-    // out: light decides. caught in light -> flee to the darkest neighbor (reverse allowed)
-    const F = T.GHOST_FEAR;
+    // out: strong light is a wall (caught in it -> flee to the darkest neighbor, reverse allowed)
+    const WL = T.GHOST_WALL;
     const here = this.lumAt(g.tx, g.ty);
     const L = (d: number) => this.lumAt(g.tx + DX[d], g.ty + DY[d]);
-    if (here >= F) {
+    if (here >= WL) {
       let best = opts[0];
       for (const d of opts) if (L(d) < L(best)) best = d;
       return L(best) < here ? best : -1;
     }
-    const dark = opts.filter((d) => L(d) < F);
-    if (!dark.length) return -1; // hesitate at the edge of the light
-    const fwd = dark.filter((d) => g.dir < 0 || d !== REV[g.dir]);
-    const cand = fwd.length ? fwd : dark;
-    if (this.rng() < T.GHOST_WANDER) return cand[Math.floor(this.rng() * cand.length)];
+    const ok = opts.filter((d) => L(d) < WL);
+    if (!ok.length) return -1; // hesitate at the edge of the strong light
+    const fwd = ok.filter((d) => g.dir < 0 || d !== REV[g.dir]);
+    const cand = fwd.length ? fwd : ok;
     let best = -1;
-    let bd = 1e9;
-    for (const d of cand) {
-      const v = this.distDark[(g.ty + DY[d]) * W + g.tx + DX[d]];
-      if (v >= 0 && v < bd) { bd = v; best = d; }
+    if (this.rng() < T.GHOST_WANDER) best = cand[Math.floor(this.rng() * cand.length)];
+    else {
+      let bd = 1e9;
+      for (const d of cand) {
+        const v = this.distRoad[(g.ty + DY[d]) * W + g.tx + DX[d]];
+        if (v >= 0 && v < bd) { bd = v; best = d; }
+      }
+      if (best < 0) {
+        // no road to the player (walled by strong light): drift toward them anyway, a bit at random
+        const [px, py] = this.near(this.p);
+        let bs = -1e9;
+        for (const d of cand) {
+          const s = -Math.hypot(g.tx + DX[d] - px, g.ty + DY[d] - py) + this.rng() * 3;
+          if (s > bs) { bs = s; best = d; }
+        }
+      }
     }
-    if (best >= 0) return best;
-    // no dark road to the player: drift toward them anyway (straight-line guess), a bit at random
-    const [px, py] = this.near(this.p);
-    let bs = -1e9;
-    for (const d of cand) {
-      const s = -Math.hypot(g.tx + DX[d] - px, g.ty + DY[d] - py) + this.rng() * 3;
-      if (s > bs) { bs = s; best = d; }
+    // a lit pellet ahead: stop and blow it out first
+    const ni = (g.ty + DY[best]) * W + g.tx + DX[best];
+    if (this.pellet[ni] === 1) {
+      g.blow = T.GHOST_BLOW_SEC;
+      g.blowAt = ni;
+      return -1;
     }
     return best;
   }
@@ -527,11 +538,12 @@ export class Game {
       const [nx, ny] = this.near(p);
       const i = ny * this.W + nx;
       if (this.pellet[i]) {
-        const pw = this.pellet[i] === 2;
+        const kind = this.pellet[i];
+        const pw = kind === 2;
         this.pellet[i] = 0;
         this.pelletsLeft--;
         this.score += pw ? T.SCORE_POWER : T.SCORE_PELLET;
-        this.charge = Math.min(T.CHARGE_MAX, this.charge + (pw ? T.CHARGE_PER_POWER : T.CHARGE_PER_PELLET));
+        this.charge = Math.min(T.CHARGE_MAX, this.charge + (pw ? T.CHARGE_PER_POWER : kind === 3 ? T.CHARGE_PER_DARK : T.CHARGE_PER_PELLET));
         if (pw) this.onToast("おおきな ひかり! ともしびが まんたん", "#ffd890");
         if (this.pelletsLeft <= 0) {
           this.clearing = T.CLEAR_SEC;
@@ -542,11 +554,10 @@ export class Game {
     }
     if (I.burst) { I.burst = false; this.burst(); }
 
-    // dark-road distances from the player, over tiles the ghosts dare to walk
+    // road distances from the player, over tiles the ghosts can walk (anything below strong light)
     {
       const [px, py] = this.near(p);
-      const F = T.GHOST_FEAR;
-      this.bfs([[px, py]], (x, y) => this.tile(x, y) === OPEN && this.lumAt(x, y) < F, this.distDark);
+      this.bfs([[px, py]], (x, y) => this.tile(x, y) === OPEN && this.lumAt(x, y) < T.GHOST_WALL, this.distRoad);
     }
 
     // ghosts
@@ -577,25 +588,44 @@ export class Game {
         g.flash = 0.05;
         if (g.hp <= 0) { this.burnOut(g); continue; }
       } else g.hp = Math.min(1, g.hp + dt * 0.3);
-      // light appeared on the tile ahead while on the way: back off (hesitate) instead of walking in
+      if (g.blow > 0) {
+        g.blow -= dt;
+        if (g.blow <= 0 && this.pellet[g.blowAt] === 1) this.blowOut(g.blowAt);
+        const [gx, gy] = this.pos(g);
+        if (Math.hypot(gx - ppx, gy - ppy) < T.HIT_DIST) { this.die(); break; }
+        continue;
+      }
+      // strong light appeared on the tile ahead while on the way: back off instead of walking in
       if (g.dir >= 0 && g.t < 0.5) {
         const ax = g.tx + DX[g.dir];
         const ay = g.ty + DY[g.dir];
-        if (this.lumAt(ax, ay) >= T.GHOST_FEAR && this.lumAt(ax, ay) > this.lumAt(g.tx, g.ty)) {
+        if (this.lumAt(ax, ay) >= T.GHOST_WALL && this.lumAt(ax, ay) > this.lumAt(g.tx, g.ty)) {
           g.tx = ax;
           g.ty = ay;
           g.t = 1 - g.t;
           g.dir = REV[g.dir];
         }
       }
-      const sp = gs * (1 - (1 - T.GHOST_SLOW_IN_LIGHT) * g.burn);
+      const sp = gs * (g.lum >= T.GHOST_FEAR ? T.GHOST_LIGHT_SLOW : 1) * (1 - (1 - T.GHOST_SLOW_IN_LIGHT) * g.burn);
       this.advance(g, sp * dt, (m) => this.ghostDecide(m as Ghost));
       const [gx, gy] = this.pos(g);
       if (Math.hypot(gx - ppx, gy - ppy) < T.HIT_DIST) { this.die(); break; }
     }
   }
 
+  blowOut(i: number) {
+    this.pellet[i] = 3;
+    this.blown++;
+    const x = ((i % this.W) + 0.5) * T.TILE;
+    const y = (((i / this.W) | 0) + 0.5) * T.TILE;
+    for (let k = 0; k < 6; k++) {
+      const a = this.rng() * Math.PI * 2;
+      this.sparks.push({ x, y, vx: Math.cos(a) * 25, vy: Math.sin(a) * 25 - 20, life: 0.6, max: 0.6, c: [0.45, 0.42, 0.5] });
+    }
+  }
+
   private burnOut(g: Ghost) {
+    g.blow = 0;
     g.state = "eyes";
     g.burn = 0;
     const chain = this.time - this.lastBurstT < T.BURST_SEC + 1;
@@ -667,7 +697,9 @@ export class Game {
       if (!v) continue;
       const x = ((i % W) + 0.5) * TL;
       const y = (((i / W) | 0) + 0.5) * TL;
-      if (v === 1) {
+      if (v === 3) {
+        G.circle(x, y, T.PELLET_R * 0.8, 0.35, 0.33, 0.4, 0.7, 1);
+      } else if (v === 1) {
         em(x, y, T.PELLET_R, PELLET_C, T.PELLET_E);
         G.circle(x, y, T.PELLET_R * 0.7, 1, 0.9, 0.7, 0.8, 2);
       } else {

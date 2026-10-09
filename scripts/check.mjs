@@ -1,6 +1,6 @@
 // Numeric checks for the M0: node scripts/check.mjs [url] [games]
-// (a) eating pellets lowers lightAt around them (b) light vs ghosts: a ghost boxed in by lit tiles does not move,
-// a burst burns it; in the dark it closes in on the player (c) GPU time does not follow the pellet count
+// (a) eating pellets lowers lightAt around them (b) light vs ghosts: waiting without eating, ghosts blow out pellets
+// and come (no locking them in); slower in pellet light; a burst burns; in the dark a ghost closes in (c) GPU time does not follow the pellet count
 // (d) bot games: clear rate, survival time (difficulty / stuck gauge, not a fun score)
 import { chromium } from "file:///Z:/Claude/_tools/node_modules/playwright/index.mjs";
 
@@ -72,7 +72,49 @@ out.b = await page.evaluate(async () => {
   G.newGame(7);
   g.lives = 99;
   g.ghosts.forEach((e) => { e.state = "pen"; e.wait = 1e9; });
-  // b1: a ghost on a cleared tile whose open neighbours all still hold pellets (lit) stays put
+  // b1: the player just waits at the start without eating. Ghosts must blow their way out of the lit maze and catch
+  // them (this used to be "never": pellets were walls). Same run: ghost speed in dark vs dim (pellet) light, and how
+  // often an out ghost stood on strong light (>= GHOST_WALL, should be 0 without bursts)
+  {
+    window.__hold = true;
+    G.newGame(7);
+    g.lives = 99;
+    g.input.want = -1;
+    const dt = 1 / 30;
+    let t = 0, firstOut = -1, caught = -1, wallTicks = 0, outTicks = 0, burnTicks = 0;
+    const sp = { dark: [0, 0], dim: [0, 0] };
+    const prev = g.ghosts.map((q) => g.pos(q));
+    while (t < 120 && caught < 0) {
+      G.step(1, dt);
+      t += dt;
+      g.ghosts.forEach((q, k) => {
+        const p = g.pos(q);
+        if (q.state === "out") {
+          outTicks++;
+          if (firstOut < 0) firstOut = t;
+          const [nx, ny] = g.near(q);
+          if (g.lumAt(nx, ny) >= 4) wallTicks++;
+          if (q.burn > 0.01) burnTicks++;
+          if (q.blow <= 0) {
+            const band = q.lum >= 0.4 ? "dim" : "dark";
+            sp[band][0] += Math.hypot(p[0] - prev[k][0], p[1] - prev[k][1]);
+            sp[band][1] += dt;
+          }
+        }
+        prev[k] = p;
+      });
+      if (g.deaths > 0) caught = t;
+    }
+    window.__hold = false;
+    res.idle = {
+      firstOutSec: r2(firstOut), caughtSec: caught < 0 ? null : r2(caught), blownOut: g.blown, pelletsLeft: g.pelletsLeft,
+      speedTilesPerSec: { dark: r2(sp.dark[0] / Math.max(1e-6, sp.dark[1])), dim: r2(sp.dim[0] / Math.max(1e-6, sp.dim[1])), darkSec: r2(sp.dark[1]), dimSec: r2(sp.dim[1]) },
+      onStrongLightTicks: wallTicks, burnTicksWithoutBurst: burnTicks, outTicks,
+    };
+  }
+  G.newGame(7);
+  g.lives = 99;
+  g.ghosts.forEach((q) => { q.state = "pen"; q.wait = 1e9; });
   let spot = null;
   for (let i = 0; i < W * g.H && !spot; i++) {
     const x = i % W, y = (i / W) | 0;
@@ -86,14 +128,6 @@ out.b = await page.evaluate(async () => {
   const e = g.ghosts[0];
   Object.assign(e, { state: "out", tx: sx, ty: sy, dir: -1, t: 0, hp: 1 });
   await wait(6);
-  const p0 = g.pos(e);
-  let lumMax1 = 0;
-  for (let i = 0; i < 30; i++) { await sleep(100); lumMax1 = Math.max(lumMax1, e.lum); }
-  const p1 = g.pos(e);
-  res.boxedIn = {
-    tile: spot, lumHere: r2(g.lumAt(sx, sy)), neighbours: N4.filter(([dx, dy]) => open(sx + dx, sy + dy)).map(([dx, dy]) => r2(g.lumAt(sx + dx, sy + dy))),
-    moved3s: r2(Math.hypot(p1[0] - p0[0], p1[1] - p0[1])), state: e.state, ghostLumMax: r2(lumMax1), fear: 0.4, burnStart: 0.9,
-  };
   // b2: the player stands right next to it and releases a full charge
   const nb = N4.find(([dx, dy]) => open(sx + dx, sy + dy));
   g.pellet[(sy + nb[1]) * W + sx + nb[0]] = 0;
