@@ -17,6 +17,7 @@ const r = await p.evaluate(() => {
   // (1) the top row y=1 is a straight corridor x=1..17. Ghost at x=1 chases the player parked at x=17 for 8 s, 3 seeds averaged (ghosts take a random turn 15% of the time).
   const run1 = (lit, slow, blow, seed) => {
     G.newGame(seed);
+    g.newStage(3); // the full-size maze (its top row is a long straight corridor)
     g.knobs.lightSlow = slow;
     g.knobs.blowSec = blow;
     g.lives = 99;
@@ -45,6 +46,7 @@ const r = await p.evaluate(() => {
     const row = [];
     for (let d = 1; d <= 7; d++) {
       G.newGame(7);
+      g.newStage(3);
       g.knobs.chargeMax = cm;
       g.pellet.fill(0); g.pellet[g.W * 21 + 17] = 1; g.pelletsLeft = 1; g.lives = 99;
       g.ghosts.forEach((e) => { e.state = "pen"; e.wait = 1e9; });

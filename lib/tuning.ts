@@ -1,8 +1,7 @@
 // All the knobs. Units are in comments; logic never hard-codes these.
 export const T = {
   TILE: 24, // world px
-  CELLS_W: 9, // maze cells across (tiles = 2*cells+1)
-  CELLS_H: 11,
+  STAGE_CELLS: [[7, 8], [9, 10], [9, 11]], // maze cells [across (odd: the maze is mirrored), down] per stage, last repeats. tiles = 2*cells+1
   LOOP_CHANCE: 0.12, // extra wall removals after braiding (more loops = more escape routes)
   VIEW_PAD: 1.2, // tiles of margin around the maze on screen
 
@@ -46,8 +45,8 @@ export const T = {
   // ghosts
   GHOSTS_BASE: 2, // stage 1; +1 per stage up to GHOSTS_MAX
   GHOSTS_MAX: 4,
-  GHOST_SPEED: 4.2, // tiles/s while the maze is still full of light
-  GHOST_SPEED_DARK: 1.6, // + this * (fraction of pellets eaten): the darker the maze, the faster (ends above PLAYER_SPEED)
+  GHOST_SPEED: 3.6, // tiles/s while the maze is still full of light
+  GHOST_SPEED_DARK: 1.2, // + this * (fraction of pellets eaten): the darker the maze, the faster (stage 1 ends at 4.8 < PLAYER_SPEED)
   GHOST_SPEED_PER_STAGE: 0.25,
   GHOST_SPEED_MAX: 6.4,
   GHOST_EYES_SPEED: 9,
@@ -56,8 +55,9 @@ export const T = {
   // light levels (tier3): pellet tile ~2.7, 1 pellet next door ~0.25, 2 ~0.5, power pellet ~7-11
   GHOST_FEAR: 0.2, // dim light above this: ghosts walk slowly (knob lightSlow). One lit pellet next door (~0.25) counts; plain dark is mostly < 0.15
   GHOST_WALL: 4, // strong light (burst, ember, power pellet) above this: ghosts will not enter, and flee if caught in it
-  GHOST_BURN: 1.5, // light where ghosts start to burn (full at 3x). Ghosts never stand on a lit pellet (they blow it out first), so pellets stay below this
-  GHOST_BURN_DPS: 5, // hp/s at full burn (hp = 1)
+  GHOST_BURN: 1.5, // light where ghosts start to burn. Ghosts never stand on a lit pellet (they blow it out first), so pellets stay below this
+  GHOST_BURN_FULL: 2.4, // full burn from here (was 3x = 4.5: a full burst only killed within 2-3 tiles while its light looked 5 tiles wide)
+  GHOST_BURN_DPS: 8, // hp/s at full burn (hp = 1)
   GHOST_SLOW_IN_LIGHT: 0.5, // speed multiplier while burning
   GHOST_WANDER: 0.15, // chance to take a random dark turn instead of the shortest dark path
 

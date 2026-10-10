@@ -46,18 +46,18 @@ let MAP_SERIAL = 0;
 export class Game {
   seed: number;
   rng: () => number;
-  W = 2 * T.CELLS_W + 1;
-  H = 2 * T.CELLS_H + 1;
-  map: Uint8Array;
+  W = 0;
+  H = 0;
+  map = new Uint8Array(0);
   mapVersion = 0;
-  pellet: Uint8Array; // 0 none, 1 pellet, 2 power
+  pellet = new Uint8Array(0); // 0 none, 1 pellet, 2 power, 3 blown out by a ghost (dark, still to be eaten)
   pelletsLeft = 0;
   pelletsTotal = 0;
-  tileLum: Float32Array; // light at every tile center, read back from the GPU
+  tileLum = new Float32Array(0); // light at every tile center, read back from the GPU
   lumSerialSeen = 0;
   distExit: Int16Array = new Int16Array(0); // ghost BFS to the tile above the door
   distPen: Int16Array = new Int16Array(0); // ghost BFS to the pen center
-  distRoad: Int32Array; // BFS from the player over tiles the ghosts can walk (below GHOST_WALL), every update
+  distRoad = new Int32Array(0); // BFS from the player over tiles the ghosts can walk (below GHOST_WALL), every update
   penX = 0;
   penY = 0;
   exitX = 0;
@@ -108,10 +108,6 @@ export class Game {
   constructor(seed: number) {
     this.seed = seed;
     this.rng = mulberry(seed);
-    this.map = new Uint8Array(this.W * this.H);
-    this.pellet = new Uint8Array(this.W * this.H);
-    this.tileLum = new Float32Array(this.W * this.H);
-    this.distRoad = new Int32Array(this.W * this.H);
     this.newStage(1);
   }
 
@@ -148,10 +144,16 @@ export class Game {
   }
 
   private buildMaze() {
+    const [CW, CH] = T.STAGE_CELLS[Math.min(this.stage, T.STAGE_CELLS.length) - 1];
+    this.W = 2 * CW + 1;
+    this.H = 2 * CH + 1;
+    const n = this.W * this.H;
+    this.map = new Uint8Array(n);
+    this.pellet = new Uint8Array(n);
+    this.tileLum = new Float32Array(n);
+    this.distRoad = new Int32Array(n);
     const W = this.W;
     const H = this.H;
-    const CW = T.CELLS_W;
-    const CH = T.CELLS_H;
     const mid = (CW - 1) >> 1;
     const R = this.rng;
     const m = this.map;
@@ -399,12 +401,12 @@ export class Game {
     }
   }
 
-  private playerDecide = (m: Mover) => {
+  private playerDecide(m: Mover) {
     const w = this.input.want;
     if (w >= 0 && this.playerOk(m.tx + DX[w], m.ty + DY[w])) return w;
     if (m.dir >= 0 && this.playerOk(m.tx + DX[m.dir], m.ty + DY[m.dir])) return m.dir;
     return -1;
-  };
+  }
 
   lumAt(x: number, y: number) {
     return this.tileLum[y * this.W + x];
@@ -536,7 +538,7 @@ export class Game {
       }
     }
     const ahead = p.dir >= 0 ? this.pellet[(p.ty + DY[p.dir]) * this.W + p.tx + DX[p.dir]] : 0;
-    this.advance(p, T.PLAYER_SPEED * (ahead ? T.PLAYER_EAT_SLOW : 1) * dt, this.playerDecide);
+    this.advance(p, T.PLAYER_SPEED * (ahead ? T.PLAYER_EAT_SLOW : 1) * dt, (m) => this.playerDecide(m));
     if (p.dir >= 0) this.face = p.dir;
     this.mouth += dt * (p.dir >= 0 ? 14 : 0);
     {
@@ -587,7 +589,7 @@ export class Game {
       }
       // out: burn in light
       const B = T.GHOST_BURN;
-      g.burn = smooth(B, B * 3, g.lum);
+      g.burn = smooth(B, T.GHOST_BURN_FULL, g.lum);
       if (g.burn > 0.01) {
         g.hp -= T.GHOST_BURN_DPS * g.burn * dt;
         g.flash = 0.05;
@@ -597,7 +599,7 @@ export class Game {
         g.blow -= dt;
         if (g.blow <= 0 && this.pellet[g.blowAt] === 1) this.blowOut(g.blowAt);
         const [gx, gy] = this.pos(g);
-        if (Math.hypot(gx - ppx, gy - ppy) < T.HIT_DIST) { this.die(); break; }
+        if (g.lum < T.GHOST_WALL && Math.hypot(gx - ppx, gy - ppy) < T.HIT_DIST) { this.die(); break; } // inside strong light it is busy burning
         continue;
       }
       // strong light appeared on the tile ahead while on the way: back off instead of walking in
@@ -614,7 +616,7 @@ export class Game {
       const sp = gs * (g.lum >= T.GHOST_FEAR ? this.knobs.lightSlow : 1) * (1 - (1 - T.GHOST_SLOW_IN_LIGHT) * g.burn);
       this.advance(g, sp * dt, (m) => this.ghostDecide(m as Ghost));
       const [gx, gy] = this.pos(g);
-      if (Math.hypot(gx - ppx, gy - ppy) < T.HIT_DIST) { this.die(); break; }
+      if (g.lum < T.GHOST_WALL && Math.hypot(gx - ppx, gy - ppy) < T.HIT_DIST) { this.die(); break; } // inside strong light it is busy burning
     }
   }
 
