@@ -1,5 +1,6 @@
 import { T, KNOBS, KNOB_DEFAULT, KnobKey } from "./tuning";
 import { Batch, Frame, PROBE_N } from "./rc";
+import { PUZZLES } from "./puzzles";
 
 type V3 = [number, number, number];
 // directions: 0 right, 1 down, 2 left, 3 up, -1 stopped
@@ -14,7 +15,7 @@ export const DOOR = 2; // ghosts only
 export const PEN = 3; // ghosts only
 
 type Mover = { tx: number; ty: number; dir: number; t: number }; // at tile (tx,ty), t of the way to the next tile along dir
-export type GhostState = "pen" | "leave" | "out" | "eyes";
+export type GhostState = "pen" | "leave" | "out" | "eyes" | "gone"; // gone = burned in puzzle mode
 export type Ghost = Mover & {
   id: number; state: GhostState; wait: number; hp: number; burn: number; lum: number;
   c: V3; slot: number; flash: number; burnedBy: number; blow: number; blowAt: number;
@@ -40,6 +41,7 @@ function mulberry(seed: number) {
 }
 
 export type Input = { want: number; burst: boolean };
+export type Mode = "chase" | "puzzle";
 
 let MAP_SERIAL = 0;
 
@@ -90,6 +92,8 @@ export class Game {
   dying = 0;
   clearing = 0;
   over = false;
+  allClear = false; // puzzle: the last stage is done
+  spawns: [number, number][] = []; // puzzle ghost starts
   paused = false;
   lightCount = 0;
   probeKeys: number[] = []; // tile index, or -1-ghostIndex
@@ -97,6 +101,7 @@ export class Game {
   pendingProbe = new Map<number, number[]>();
   onToast: (text: string, color?: string) => void = () => {};
   onStage: (s: number) => void = () => {};
+  onClear: (s: number) => void = () => {};
   input: Input = { want: -1, burst: false };
   knobs = Object.fromEntries(KNOBS.map((k, i) => [k.key, k.vals[KNOB_DEFAULT[i]]])) as Record<KnobKey, number>;
 
@@ -105,7 +110,10 @@ export class Game {
   glow = new Batch();
   probes = new Float32Array(PROBE_N * 2);
 
-  constructor(seed: number) {
+  mode: Mode;
+
+  constructor(seed: number, mode: Mode = "chase") {
+    this.mode = mode;
     this.seed = seed;
     this.rng = mulberry(seed);
     this.newStage(1);
@@ -252,7 +260,6 @@ export class Game {
     const ghostTile = (x: number, y: number) => this.tile(x, y) !== WALL;
     this.distExit = Int16Array.from(this.bfs([[this.exitX, this.exitY]], ghostTile));
     this.distPen = Int16Array.from(this.bfs([[this.penX, this.penY]], ghostTile));
-    this.buildEdges();
   }
 
   bfs(src: [number, number][], ok: (x: number, y: number) => boolean, out?: Int32Array) {
@@ -318,6 +325,45 @@ export class Game {
   newStage(stage: number) {
     this.stage = stage;
     this.rng = mulberry(this.seed * 7919 + stage * 1013);
+    if (this.mode === "puzzle") this.loadPuzzle();
+    else this.chaseMaze();
+    this.pelletsTotal = this.pelletsLeft;
+    this.tileLum.fill(0);
+    this.lights = [];
+    this.sparks = [];
+    this.charge = 0;
+    this.stageTime = 0;
+    this.mapVersion = ++MAP_SERIAL;
+    this.buildEdges();
+    this.resetActors();
+    this.onStage(stage);
+  }
+
+  puzzle() {
+    return PUZZLES[Math.min(this.stage, PUZZLES.length) - 1];
+  }
+
+  private loadPuzzle() {
+    const rows = this.puzzle().map;
+    this.W = rows[0].length;
+    this.H = rows.length;
+    const n = this.W * this.H;
+    this.map = new Uint8Array(n);
+    this.pellet = new Uint8Array(n);
+    this.tileLum = new Float32Array(n);
+    this.distRoad = new Int32Array(n);
+    this.pelletsLeft = 0;
+    this.spawns = [];
+    rows.forEach((row, y) => [...row].forEach((ch, x) => {
+      const i = y * this.W + x;
+      this.map[i] = ch === "#" ? WALL : OPEN;
+      if (ch === "." || ch === "o") { this.pellet[i] = ch === "o" ? 2 : 1; this.pelletsLeft++; }
+      if (ch === "P") { this.startX = x; this.startY = y; }
+      if (ch === "G") this.spawns.push([x, y]);
+    }));
+  }
+
+  private chaseMaze() {
     this.buildMaze();
     this.pellet.fill(0);
     this.pelletsLeft = 0;
@@ -343,23 +389,20 @@ export class Game {
       }
       if (best >= 0) this.pellet[best] = 2;
     }
-    this.pelletsTotal = this.pelletsLeft;
-    this.tileLum.fill(0);
-    this.lights = [];
-    this.sparks = [];
-    this.charge = 0;
-    this.stageTime = 0;
-    this.mapVersion = ++MAP_SERIAL;
-    this.resetActors();
-    this.onStage(stage);
   }
 
   private resetActors() {
     this.p = { tx: this.startX, ty: this.startY, dir: -1, t: 0 };
     this.input.want = -1;
     this.face = 2;
-    const n = Math.min(T.GHOSTS_MAX, T.GHOSTS_BASE + this.stage - 1);
     this.ghosts = [];
+    if (this.mode === "puzzle") {
+      this.spawns.forEach(([x, y], i) => this.ghosts.push({
+        id: i, tx: x, ty: y, dir: -1, t: 0, state: "out", wait: 0, hp: 1, burn: 0, lum: 0, c: GHOST_C[i % 4], slot: i, flash: 0, burnedBy: 0, blow: 0, blowAt: -1,
+      }));
+      return;
+    }
+    const n = Math.min(T.GHOSTS_MAX, T.GHOSTS_BASE + this.stage - 1);
     for (let i = 0; i < n; i++) {
       const slot = i % 4;
       this.ghosts.push({
@@ -374,6 +417,7 @@ export class Game {
   }
 
   ghostSpeed() {
+    if (this.mode === "puzzle") return this.puzzle().speed;
     const dark = 1 - this.pelletsLeft / Math.max(1, this.pelletsTotal);
     return Math.min(T.GHOST_SPEED_MAX, T.GHOST_SPEED + T.GHOST_SPEED_DARK * dark + T.GHOST_SPEED_PER_STAGE * (this.stage - 1));
   }
@@ -442,7 +486,7 @@ export class Game {
     const fwd = ok.filter((d) => g.dir < 0 || d !== REV[g.dir]);
     const cand = fwd.length ? fwd : ok;
     let best = -1;
-    if (this.rng() < T.GHOST_WANDER) best = cand[Math.floor(this.rng() * cand.length)];
+    if (this.mode === "chase" && this.rng() < T.GHOST_WANDER) best = cand[Math.floor(this.rng() * cand.length)];
     else {
       let bd = 1e9;
       for (const d of cand) {
@@ -454,7 +498,7 @@ export class Game {
         const [px, py] = this.near(this.p);
         let bs = -1e9;
         for (const d of cand) {
-          const s = -Math.hypot(g.tx + DX[d] - px, g.ty + DY[d] - py) + this.rng() * 3;
+          const s = -Math.hypot(g.tx + DX[d] - px, g.ty + DY[d] - py) + (this.mode === "chase" ? this.rng() * 3 : d * 0.01);
           if (s > bs) { bs = s; best = d; }
         }
       }
@@ -476,7 +520,7 @@ export class Game {
     const [x, y] = this.pos(this.p);
     const wx = x * T.TILE;
     const wy = y * T.TILE;
-    this.lights.push({ x: wx, y: wy, r: 3 + T.BURST_R * k, e: T.BURST_E_MIN + (T.BURST_E - T.BURST_E_MIN) * kg, life: T.BURST_SEC, max: T.BURST_SEC, c: BURST_C, kind: "flash" });
+    this.lights.push({ x: wx, y: wy, r: T.BURST_R_MIN + (T.BURST_R - T.BURST_R_MIN) * k, e: T.BURST_E_MIN + (T.BURST_E - T.BURST_E_MIN) * kg, life: T.BURST_SEC, max: T.BURST_SEC, c: BURST_C, kind: "flash" });
     this.lights.push({ x: wx, y: wy, r: 3, e: T.EMBER_E * Math.max(0.35, k), life: T.EMBER_SEC * Math.max(0.35, k), max: T.EMBER_SEC * Math.max(0.35, k), c: POWER_C, kind: "ember" });
     for (let i = 0; i < 18; i++) {
       const a = (i / 18) * Math.PI * 2;
@@ -512,14 +556,19 @@ export class Game {
     if (this.dying > 0) {
       this.dying -= dt;
       if (this.dying <= 0) {
-        if (this.lives <= 0) this.over = true;
+        if (this.mode === "puzzle") this.newStage(this.stage); // puzzle: caught = the stage starts over
+        else if (this.lives <= 0) this.over = true;
         else this.resetActors();
       }
       return;
     }
     if (this.clearing > 0) {
       this.clearing -= dt;
-      if (this.clearing <= 0) this.newStage(this.stage + 1);
+      if (this.clearing <= 0) {
+        this.onClear(this.stage);
+        if (this.mode === "puzzle" && this.stage >= PUZZLES.length) { this.allClear = true; this.over = true; }
+        else this.newStage(this.stage + 1);
+      }
       return;
     }
     this.stageTime += dt;
@@ -572,6 +621,8 @@ export class Game {
     const [ppx, ppy] = this.pos(p);
     for (const g of this.ghosts) {
       g.flash -= dt;
+      if (g.state === "gone") continue;
+      if (this.mode === "puzzle" && this.stageTime < T.PUZZLE_GRACE) continue; // a moment to read the stage
       if (g.state === "pen") {
         g.wait -= dt;
         if (g.wait <= 0) { g.state = "leave"; g.dir = -1; g.t = 0; g.hp = 1; }
@@ -646,13 +697,14 @@ export class Game {
       this.sparks.push({ x: x * T.TILE, y: y * T.TILE, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0.5 + this.rng() * 0.4, max: 0.9, c: PURPLE });
     }
     this.onToast(`おばけが やけた +${pts}`, "#c79bff");
+    if (this.mode === "puzzle") { g.state = "gone"; return; }
     // snap to the nearer tile so the eyes walk the grid home
     const [nx, ny] = this.near(g);
     g.tx = nx; g.ty = ny; g.t = 0; g.dir = -1;
   }
 
   die() {
-    this.lives--;
+    if (this.mode === "chase") this.lives--;
     this.deaths++;
     this.dying = T.DEATH_SEC;
     this.shake = 8;
@@ -694,7 +746,7 @@ export class Game {
 
     // wall outline (display only)
     for (const [x0, y0, x1, y1] of this.edges) G.line(x0 * TL, y0 * TL, x1 * TL, y1 * TL, 0.5, 0.25, 0.45, 1, T.OUTLINE_A, 2);
-    {
+    if (this.mode === "chase") {
       const k = 0.6 + 0.4 * Math.sin(t * 3);
       G.line((this.penX - 0.45) * TL, (this.penY - 2.5) * TL, (this.penX + 0.45) * TL, (this.penY - 2.5) * TL, 1, 1, 0.5, 0.8, 0.5 * k, 2);
     }
@@ -754,6 +806,7 @@ export class Game {
 
     // ghosts: lit bodies (invisible in the dark), glowing eyes
     for (const g of this.ghosts) {
+      if (g.state === "gone") continue;
       const [gx, gy] = this.pos(g);
       const x = gx * TL;
       const y = (gy + (g.state === "pen" ? Math.sin(t * 4 + g.id) * 0.12 : 0)) * TL;

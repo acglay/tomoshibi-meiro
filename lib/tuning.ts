@@ -35,9 +35,10 @@ export const T = {
   // CHARGE_MAX / BURST_MIN / GHOST_LIGHT_SLOW / GHOST_BLOW_SEC live in KNOBS below (switchable in ⚙)
   CHARGE_REF: 30, // burst strength k = charge / CHARGE_REF: a bigger container (chargeMax) gives a bigger full burst
   BURST_E: 220, // emission at full charge (scales as (charge/max)^BURST_GAMMA)
-  BURST_E_MIN: 25,
+  BURST_E_MIN: 70, // even the smallest burst (BURST_MIN charge) burns 1-2 tiles. Reach ~ emission x radius, so both have floors
   BURST_GAMMA: 1.3,
-  BURST_R: 9, // world px emitter radius at full charge
+  BURST_R_MIN: 8, // world px emitter radius at the smallest burst
+  BURST_R: 12, // world px emitter radius at full charge
   BURST_SEC: 0.9, // flash duration (full brightness for the first half)
   EMBER_SEC: 6, // the spot keeps glowing (fading) this long
   EMBER_E: 14, // at full charge
@@ -61,6 +62,7 @@ export const T = {
   GHOST_SLOW_IN_LIGHT: 0.5, // speed multiplier while burning
   GHOST_WANDER: 0.15, // chance to take a random dark turn instead of the shortest dark path
 
+  PUZZLE_GRACE: 1.5, // s: puzzle ghosts wait this long after a stage (re)starts
   HITSTOP: 0.05,
   DEATH_SEC: 1.2,
   CLEAR_SEC: 1.6,

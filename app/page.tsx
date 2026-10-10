@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Game } from "@/lib/game";
+import { Game, Mode } from "@/lib/game";
+import { PUZZLES } from "@/lib/puzzles";
 import { botStep } from "@/lib/bot";
 import { RC } from "@/lib/rc";
 import { T, KNOBS, KNOB_DEFAULT } from "@/lib/tuning";
@@ -11,11 +12,12 @@ import { captureHubToken, hubToken, hubLoad, hubSave, HUB_URL } from "@/lib/hub-
 const BEST_KEY = "tomoshibi-meiro-best-v1";
 const SET_KEY = "tomoshibi-meiro-settings-v1";
 const PERF_KEY = "tomoshibi-meiro-perf-v1";
+const PUZZLE_KEY = "tomoshibi-meiro-puzzle-v1"; // highest puzzle stage cleared
 const DEF = { perf: -1, knobs: KNOB_DEFAULT }; // perf: -1 = auto, 0..4 = fixed tier. knobs: index into KNOBS[i].vals
 const HUD_CSS = 54; // css px kept free above the maze
 
 type Toast = { id: number; text: string; color: string };
-type Dbg = { __hold?: boolean; __bot?: boolean };
+type Dbg = { __hold?: boolean; __bot?: boolean; __botOpts?: Parameters<typeof botStep>[1] };
 
 export default function Page() {
   const glRef = useRef<HTMLCanvasElement>(null);
@@ -24,7 +26,11 @@ export default function Page() {
   const [settings, setSettings] = useState({ ...DEF });
   const [panel, setPanel] = useState(false);
   const [started, setStarted] = useState(false);
-  const [over, setOver] = useState<null | { score: number; stage: number }>(null);
+  const [over, setOver] = useState<null | { score: number; stage: number; allClear: boolean }>(null);
+  const [mode, setMode] = useState<Mode>("chase");
+  const [cleared, setCleared] = useState(0);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const [err, setErr] = useState("");
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [hub, setHub] = useState(false);
@@ -52,6 +58,15 @@ export default function Page() {
     } catch {}
     const b = Number(localStorage.getItem(BEST_KEY) || 0);
     setBest(b);
+    const pz = Number(localStorage.getItem(PUZZLE_KEY) || 0);
+    setCleared(pz);
+    hubLoad("puzzle").then((r) => {
+      const v = Number(r?.value || 0);
+      if (v > pz) {
+        localStorage.setItem(PUZZLE_KEY, String(v));
+        setCleared(v);
+      }
+    });
     hubLoad("best").then((r) => {
       const v = Number(r?.value || 0);
       if (v > b) {
@@ -105,10 +120,14 @@ export default function Page() {
       applyTier(manual >= 0 ? manual : auto.tier);
     };
     rc.baseInterval = T.RC_BASE_INTERVAL;
-    const g = new Game(seed);
+    const hashMode: Mode = hash.get("mode") === "puzzle" ? "puzzle" : "chase";
+    const g = new Game(seed, hashMode);
     gameRef.current = g;
-    g.onToast = (t, c) => toast(t, c);
-    g.onStage = (s) => { if (s > 1) toast(`ステージ ${s}`, "#ffd890"); };
+    hookUp(g);
+    if (hashMode === "puzzle") {
+      g.newStage(Math.max(1, Math.min(PUZZLES.length, Number(hash.get("stage")) || 1)));
+      setMode("puzzle");
+    }
     if (hash.has("play")) setStarted(true);
     applyTier(manual >= 0 ? manual : auto.tier);
     const ro = new ResizeObserver(resize);
@@ -157,12 +176,12 @@ export default function Page() {
     // one full tick: game -> RC -> light read back (used by the rAF loop and by check.mjs's fast-forward)
     const tick = (dt: number, syncProbe = false) => {
       const dbg = window as unknown as Dbg;
-      if (dbg.__bot) botStep(g);
+      if (dbg.__bot) botStep(g, dbg.__botOpts);
       const c0 = performance.now();
       g.update(dt);
       if (g.over && !wasOver) {
         wasOver = true;
-        setOver({ score: g.score, stage: g.stage });
+        setOver({ score: g.score, stage: g.stage, allClear: g.allClear });
         const b = Number(localStorage.getItem(BEST_KEY) || 0);
         if (g.score > b) {
           localStorage.setItem(BEST_KEY, String(g.score));
@@ -248,13 +267,13 @@ export default function Page() {
       step: (n: number, dt = 1 / 30) => {
         for (let i = 0; i < n && !g.over; i++) tick(dt, true);
       },
-      newGame: (s: number) => {
-        const ng = new Game(s);
-        ng.onToast = () => {};
-        ng.onStage = () => {};
+      newGame: (s: number, m: Mode = "chase", stage = 1) => {
+        const ng = new Game(s, m);
         ng.input = g.input;
         ng.knobs = g.knobs;
         Object.assign(g, ng);
+        if (stage > 1) g.newStage(stage);
+        applyKnobs(g, settingsRef.current.knobs);
       },
     };
 
@@ -266,6 +285,8 @@ export default function Page() {
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     };
+    // mount once: hookUp only wires toast/setCleared, which never change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -278,15 +299,40 @@ export default function Page() {
     if (gameRef.current) gameRef.current.paused = !started;
   }, [started]);
 
-  const retry = () => {
+  // toasts and progress saving for whatever game is running
+  function hookUp(g: Game) {
+    g.onToast = (t, c) => toast(t, c);
+    g.onStage = (s) => {
+      if (g.mode === "puzzle") {
+        const p = PUZZLES[s - 1];
+        toast(`🧩 ${s}. ${p.name}`, "#ffd890");
+        toast(p.hint, "#bfe6ff");
+      } else if (s > 1) toast(`ステージ ${s}`, "#ffd890");
+    };
+    g.onClear = (s) => {
+      if (g.mode !== "puzzle") return;
+      const was = Number(localStorage.getItem(PUZZLE_KEY) || 0);
+      if (s > was) {
+        localStorage.setItem(PUZZLE_KEY, String(s));
+        setCleared(s);
+        hubSave("puzzle", s);
+      }
+    };
+  }
+
+  const start = (m: Mode, stage = 1) => {
     const old = gameRef.current!;
-    const g = new Game(Math.floor(Math.random() * 1e9));
-    g.onToast = old.onToast;
-    g.onStage = old.onStage;
+    const g = new Game(Math.floor(Math.random() * 1e9), m);
     g.input = old.input;
     g.knobs = old.knobs;
     Object.assign(old, g);
+    hookUp(old);
+    if (m === "puzzle") old.newStage(stage);
+    else old.onStage(1);
+    applyKnobs(old, settings.knobs);
+    setMode(m);
     setOver(null);
+    setStarted(true);
   };
 
   const release = (e: React.PointerEvent) => {
@@ -304,6 +350,8 @@ export default function Page() {
       </div>
       <div className="topbar">
         {hub && <a className="rb" href={HUB_URL} title="ホームへ">🏠</a>}
+        {started && mode === "puzzle" && !over && <button className="rb" title="この面をやりなおす" onClick={() => gameRef.current?.newStage(gameRef.current.stage)}>↺</button>}
+        {started && <button className="rb" title="メニュー" onClick={() => { setStarted(false); setOver(null); }}>☰</button>}
         <button className="rb" title="スクショ保存" onClick={() => (shotRef.current = true)}>📷</button>
         <button className="rb" title="設定" onClick={() => setPanel((p) => !p)}>⚙</button>
       </div>
@@ -354,16 +402,35 @@ export default function Page() {
             <li>🟠 おおきな ひかりの玉は ともしびが まんたんに なる</li>
           </ul>
           <p className="keys">PC: 矢印キー/WASD で向きを変える ・ Space ではなつ<br />スマホ: スワイプで向きを変える ・ タップか ✨ ではなつ</p>
-          {best > 0 && <p className="best">ハイスコア {best}</p>}
-          <button className="go" onClick={() => setStarted(true)}>はじめる</button>
+          <div className="modes">
+            <div className="mode">
+              <button className="go" onClick={() => start("puzzle", Math.min(PUZZLES.length, cleared + 1))}>🧩 パズル</button>
+              <div className="stages">
+                {PUZZLES.map((p, i) => (
+                  <button key={p.name} className={i < cleared ? "done" : ""} disabled={i > cleared} title={p.name} onClick={() => start("puzzle", i + 1)}>{i + 1}</button>
+                ))}
+              </div>
+            </div>
+            <div className="mode">
+              <button className="go" onClick={() => start("chase")}>👻 おいかけっこ</button>
+              {best > 0 && <p className="best">ハイスコア {best}</p>}
+            </div>
+          </div>
         </div>
       )}
-      {over && (
+      {over && !over.allClear && (
         <div className="overlay">
           <h1>くらやみに のまれた…</h1>
           <p className="sub">スコア {over.score} / ステージ {over.stage}</p>
           {best > 0 && <p className="best">ハイスコア {best}</p>}
-          <button className="go" onClick={retry}>もう一度</button>
+          <button className="go" onClick={() => start("chase")}>もう一度</button>
+        </div>
+      )}
+      {over && over.allClear && (
+        <div className="overlay">
+          <h1>ぜんぶ クリア!</h1>
+          <p className="sub">🧩 {PUZZLES.length} めん ぜんぶ ときました</p>
+          <button className="go" onClick={() => { setStarted(false); setOver(null); }}>メニューへ</button>
         </div>
       )}
       {err && <div className="overlay"><h1>うごきません</h1><p>{err}</p></div>}
@@ -373,19 +440,20 @@ export default function Page() {
 
 // DOM HUD, touched only when a value changes
 const hudSeen = { key: "" };
+// puzzles are designed for the default values: there only "how ghosts look" follows the ⚙ knobs
 function applyKnobs(g: Game, idx: number[] | undefined) {
-  KNOBS.forEach((k, i) => { g.knobs[k.key] = k.vals[idx?.[i] ?? KNOB_DEFAULT[i]]; });
+  KNOBS.forEach((k, i) => { g.knobs[k.key] = k.vals[g.mode === "puzzle" && k.key !== "see" ? KNOB_DEFAULT[i] : idx?.[i] ?? KNOB_DEFAULT[i]]; });
   hudSeen.key = "";
 }
 function drawHud(el: HTMLDivElement, g: Game) {
-  const key = `${g.score}/${g.charge}/${g.stage}/${g.lives}/${g.pelletsLeft}/${g.knobs.chargeMax}`;
+  const key = `${g.mode}/${g.score}/${g.charge}/${g.stage}/${g.lives}/${g.pelletsLeft}/${g.knobs.chargeMax}`;
   if (key === hudSeen.key) return;
   hudSeen.key = key;
-  (el.children[0] as HTMLElement).textContent = String(g.score);
+  (el.children[0] as HTMLElement).textContent = g.mode === "puzzle" ? `🧩 ${g.stage}/${PUZZLES.length}` : String(g.score);
   const bar = el.children[1] as HTMLElement;
   const fill = bar.children[0] as HTMLElement;
   fill.style.width = `${(100 * g.charge) / g.knobs.chargeMax}%`;
   fill.className = g.charge >= g.burstMin() ? "ready" : "";
   (bar.children[1] as HTMLElement).style.left = `${(100 * g.burstMin()) / g.knobs.chargeMax}%`;
-  (el.children[2] as HTMLElement).textContent = `ステージ ${g.stage}   ${"●".repeat(Math.max(0, Math.min(9, g.lives)))}   のこり ${g.pelletsLeft}`;
+  (el.children[2] as HTMLElement).textContent = g.mode === "puzzle" ? `${g.puzzle().name}   のこり ${g.pelletsLeft}` : `ステージ ${g.stage}   ${"●".repeat(Math.max(0, Math.min(9, g.lives)))}   のこり ${g.pelletsLeft}`;
 }
