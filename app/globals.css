@@ -63,3 +63,5 @@ input[type="range"] { touch-action: pan-y; accent-color: #c08a3a; }
 .stages button { width: 36px; height: 36px; border-radius: 8px; border: 1px solid #6b5a3a; background: #1c1712; color: #ffd890; font-size: 15px; cursor: pointer; }
 .stages button.done { background: #4a3a1c; }
 .stages button:disabled { opacity: 0.35; cursor: default; }
+.joy.held { border-color: rgba(255,216,144,0.7); }
+.joy .knob { transition: none; }

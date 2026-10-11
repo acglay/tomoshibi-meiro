@@ -15,6 +15,9 @@ const PERF_KEY = "tomoshibi-meiro-perf-v1";
 const PUZZLE_KEY = "tomoshibi-meiro-puzzle-v1"; // highest puzzle stage cleared
 const DEF = { perf: -1, knobs: KNOB_DEFAULT }; // perf: -1 = auto, 0..4 = fixed tier. knobs: index into KNOBS[i].vals
 const HUD_CSS = 54; // css px kept free above the maze
+const STICK_R = 50; // css px: knob travel
+const STICK_DEAD = 12; // css px: no direction inside this
+const STICK_AREA = 0.6; // a press left of this fraction of the screen width grabs the stick
 
 type Toast = { id: number; text: string; color: string };
 type Dbg = { __hold?: boolean; __bot?: boolean; __botOpts?: Parameters<typeof botStep>[1] };
@@ -28,6 +31,7 @@ export default function Page() {
   const [started, setStarted] = useState(false);
   const [over, setOver] = useState<null | { score: number; stage: number; allClear: boolean }>(null);
   const [mode, setMode] = useState<Mode>("chase");
+  const [stick, setStick] = useState<null | { x: number; y: number; dx: number; dy: number }>(null);
   const [cleared, setCleared] = useState(0);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -134,32 +138,60 @@ export default function Page() {
     ro.observe(canvas);
 
     const KEYS: Record<string, number> = { ArrowRight: 0, KeyD: 0, ArrowDown: 1, KeyS: 1, ArrowLeft: 2, KeyA: 2, ArrowUp: 3, KeyW: 3 };
+    // a turn is wanted only while a key / the stick is held: let go and the player keeps going straight
+    // (a remembered swipe used to turn at the next corner by itself)
+    const held: number[] = [];
     const kd = (e: KeyboardEvent) => {
-      if (e.code in KEYS) { e.preventDefault(); g.input.want = KEYS[e.code]; }
+      if (e.code in KEYS) {
+        e.preventDefault();
+        const d = KEYS[e.code];
+        if (!held.includes(d)) held.push(d);
+        g.input.want = d;
+      }
       if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); if (!e.repeat) g.input.burst = true; }
       if (e.code === "Escape") g.paused = !g.paused;
     };
+    const ku = (e: KeyboardEvent) => {
+      if (!(e.code in KEYS)) return;
+      const i = held.indexOf(KEYS[e.code]);
+      if (i >= 0) held.splice(i, 1);
+      g.input.want = held.length ? held[held.length - 1] : -1;
+    };
     window.addEventListener("keydown", kd);
+    window.addEventListener("keyup", ku);
 
-    // swipe anywhere = turn (re-armed every 18px so a long drag can turn twice), a short tap = release
-    let sw: { id: number; x: number; y: number; x0: number; y0: number; t: number } | null = null;
+    // stick: press anywhere on the left part of the screen, that point is the stick's center while held
+    let st: { id: number; x: number; y: number } | null = null;
+    const pick = (dx: number, dy: number, cur: number) => {
+      if (Math.hypot(dx, dy) < STICK_DEAD) return -1;
+      if (cur >= 0) {
+        // keep the current direction unless the other axis clearly wins (no flicker on diagonals)
+        const along = cur === 0 ? dx : cur === 2 ? -dx : cur === 1 ? dy : -dy;
+        const across = cur === 0 || cur === 2 ? Math.abs(dy) : Math.abs(dx);
+        if (along > 0 && along >= across * 0.8) return cur;
+      }
+      return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 0 : 2) : dy > 0 ? 1 : 3;
+    };
     const onDown = (e: PointerEvent) => {
       if (e.pointerType === "touch") setTouch(true);
-      sw = { id: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t: performance.now() };
+      if (st || e.clientX > window.innerWidth * STICK_AREA) return;
+      st = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      setStick({ x: st.x, y: st.y, dx: 0, dy: 0 });
     };
     const onMove = (e: PointerEvent) => {
-      if (!sw || e.pointerId !== sw.id) return;
-      const dx = e.clientX - sw.x;
-      const dy = e.clientY - sw.y;
-      if (Math.hypot(dx, dy) < 18) return;
-      g.input.want = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 0 : 2) : dy > 0 ? 1 : 3;
-      sw.x = e.clientX;
-      sw.y = e.clientY;
+      if (!st || e.pointerId !== st.id) return;
+      let dx = e.clientX - st.x;
+      let dy = e.clientY - st.y;
+      const l = Math.hypot(dx, dy);
+      if (l > STICK_R) { dx = (dx / l) * STICK_R; dy = (dy / l) * STICK_R; }
+      g.input.want = pick(dx, dy, g.input.want);
+      setStick({ x: st.x, y: st.y, dx, dy });
     };
     const onUp = (e: PointerEvent) => {
-      if (!sw || e.pointerId !== sw.id) return;
-      if (Math.hypot(e.clientX - sw.x0, e.clientY - sw.y0) < 12 && performance.now() - sw.t < 300) g.input.burst = true;
-      sw = null;
+      if (!st || e.pointerId !== st.id) return;
+      st = null;
+      g.input.want = -1;
+      setStick(null);
     };
     canvas.addEventListener("pointerdown", onDown);
     window.addEventListener("pointermove", onMove);
@@ -281,6 +313,7 @@ export default function Page() {
       cancelAnimationFrame(raf);
       ro.disconnect();
       window.removeEventListener("keydown", kd);
+      window.removeEventListener("keyup", ku);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
@@ -381,6 +414,11 @@ export default function Page() {
         </div>
       )}
       {touch && started && !over && (
+        <div className={stick ? "joy held" : "joy"} style={stick ? { left: stick.x - 55, top: stick.y - 55 } : { left: 24, bottom: 36 }}>
+          <div className="knob" style={stick ? { transform: `translate(${stick.dx}px, ${stick.dy}px)` } : undefined} />
+        </div>
+      )}
+      {touch && started && !over && (
         <div className="pad">
           <button className="sk big" onPointerDown={release}>✨ はなつ</button>
         </div>
@@ -401,7 +439,7 @@ export default function Page() {
             <li>✨ たべた ひかりは ともしびに たまる。ためるほど 大きく はなてる</li>
             <li>🟠 おおきな ひかりの玉は ともしびが まんたんに なる</li>
           </ul>
-          <p className="keys">PC: 矢印キー/WASD で向きを変える ・ Space ではなつ<br />スマホ: スワイプで向きを変える ・ タップか ✨ ではなつ</p>
+          <p className="keys">PC: 矢印キー/WASD を おしている あいだ その向きへ曲がる ・ Space ではなつ<br />スマホ: 左の スティックを たおしている あいだ その向きへ曲がる(はなすと まっすぐ) ・ ✨ ではなつ</p>
           <div className="modes">
             <div className="mode">
               <button className="go" onClick={() => start("puzzle", Math.min(PUZZLES.length, cleared + 1))}>🧩 パズル</button>
