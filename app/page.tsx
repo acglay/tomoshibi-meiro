@@ -164,16 +164,19 @@ export default function Page() {
 
     // stick: press anywhere on the left part of the screen, that point is the stick's center while held
     let st: { id: number; x: number; y: number } | null = null;
+    // a diagonal push: the axis the player was not moving along when the push turned diagonal wins (= the turn you
+    // asked for), and stays latched. Re-deciding it from the current movement on every thumb tremor flipped it right
+    // after the turn and shook the player on the corner tile
+    let diagLatch = -1;
     const pick = (dx: number, dy: number) => {
-      if (Math.hypot(dx, dy) < STICK_DEAD) return -1;
+      if (Math.hypot(dx, dy) < STICK_DEAD) { diagLatch = -1; return -1; }
       const h = dx > 0 ? 0 : 2;
       const v = dy > 0 ? 1 : 3;
-      // a diagonal push: the axis the player is not already moving along wins (= the turn you are asking for)
-      const moving = g.p.dir;
       if (Math.min(Math.abs(dx), Math.abs(dy)) > STICK_DEAD * 1.5) {
-        if (moving === h) return v;
-        if (moving === v) return h;
+        if (diagLatch !== h && diagLatch !== v) diagLatch = g.p.dir === h ? v : g.p.dir === v ? h : Math.abs(dx) > Math.abs(dy) ? h : v;
+        return diagLatch;
       }
+      diagLatch = -1;
       return Math.abs(dx) > Math.abs(dy) ? h : v;
     };
     let graceT = 0;
@@ -200,6 +203,7 @@ export default function Page() {
     const onUp = (e: PointerEvent) => {
       if (!st || e.pointerId !== st.id) return;
       st = null;
+      diagLatch = -1;
       letGo();
       setStick(null);
     };

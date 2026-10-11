@@ -82,6 +82,7 @@ export class Game {
   burstSerial = 0;
   burstChain = 0;
   lastBurstT = -1e9;
+  turnTile = -1; // tile index the player last turned on (cornering will not snap back there)
   burned = 0;
   deaths = 0;
   blown = 0;
@@ -393,6 +394,7 @@ export class Game {
 
   private resetActors() {
     this.p = { tx: this.startX, ty: this.startY, dir: -1, t: 0 };
+    this.turnTile = -1;
     this.input.want = -1;
     this.face = 2;
     this.ghosts = [];
@@ -576,11 +578,15 @@ export class Game {
     // player
     const I = this.input;
     const p = this.p;
-    // cornering: just past a branch, a turn snaps back to the tile center and takes it
-    if (I.want >= 0 && p.dir >= 0 && I.want !== p.dir && I.want !== REV[p.dir] && p.t > 0 && p.t <= T.CORNER_TOL && this.playerOk(p.tx + DX[I.want], p.ty + DY[I.want])) {
+    // cornering: just past a branch, a turn snaps back to the tile center and takes it. Once per tile, and never on the
+    // tile the player just turned on (snapping back there undoes that turn = shaking on the corner)
+    const here = p.ty * this.W + p.tx;
+    if (I.want >= 0 && p.dir >= 0 && I.want !== p.dir && I.want !== REV[p.dir] && p.t > 0 && p.t <= T.CORNER_TOL && here !== this.turnTile && this.playerOk(p.tx + DX[I.want], p.ty + DY[I.want])) {
       p.t = 0;
       p.dir = I.want;
+      this.turnTile = here;
     }
+    const dir0 = p.dir;
     if (I.want >= 0 && p.dir >= 0 && I.want === REV[p.dir]) {
       // reverse at once, mid-tile
       if (p.t < 1e-6) p.dir = -1;
@@ -593,6 +599,7 @@ export class Game {
     }
     const ahead = p.dir >= 0 ? this.pellet[(p.ty + DY[p.dir]) * this.W + p.tx + DX[p.dir]] : 0;
     this.advance(p, T.PLAYER_SPEED * (ahead ? T.PLAYER_EAT_SLOW : 1) * dt, (m) => this.playerDecide(m));
+    if (p.dir >= 0 && p.dir !== dir0) this.turnTile = p.ty * this.W + p.tx;
     if (p.dir >= 0) this.face = p.dir;
     this.mouth += dt * (p.dir >= 0 ? 14 : 0);
     {

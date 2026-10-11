@@ -73,14 +73,44 @@ const run = (setup) => p.evaluate(async (setup) => {
   return [g.p.tx, g.p.ty];
 }, setup);
 out.lateTurn = { at: await run({ p: { tx: 4, ty: 3, dir: 0, t: 0.2 }, want: 3 }), expect: "x=4, y<3 (went up the branch)" };
-await p.evaluate(() => { const g = window.game.g; g.newStage(3); g.ghosts = []; g.stageTime = 5; g.p = { tx: 2, ty: 3, dir: 0, t: 0 }; g.input.want = -1; });
+// a crossroads where the path goes on both right and up (only there the old cornering shook back and forth)
+out.crossroads = await p.evaluate(() => {
+  const g = window.game.g;
+  for (const st of [5, 6, 4, 3]) {
+    g.newStage(st);
+    const ok = (x, y) => g.tile(x, y) === 0;
+    for (let y = 1; y < g.H - 1; y++) for (let x = 2; x < g.W - 1; x++)
+      if (ok(x - 1, y) && ok(x + 1, y) && ok(x, y - 1) && ok(x, y - 2)) {
+        g.ghosts = []; g.stageTime = 5; g.p = { tx: x - 1, ty: y, dir: 0, t: 0 }; g.input.want = -1;
+        return { stage: st, tile: [x, y] };
+      }
+  }
+  return null;
+});
 await p.mouse.move(100, 650);
 await p.mouse.down();
 await p.mouse.move(140, 620); // up-right: dx 40, dy -30
 const diagWant = await want();
-await p.waitForTimeout(700);
+// held for 1 s with a thumb's tremor (+-1 px moves: every move re-reads the stick): count direction changes and
+// tiles travelled (it used to shake up/right on the corner tile)
+let wiggle = true;
+const shake = (async () => { for (let i = 0; wiggle; i++) { await p.mouse.move(140 + (i % 2), 620 - (i % 2)); await p.waitForTimeout(16); } })();
+const trace = await p.evaluate(async () => {
+  const g = window.game.g;
+  let changes = 0, last = g.p.dir, tiles = 0, lastT = g.p.ty * 100 + g.p.tx;
+  const t0 = performance.now();
+  while (performance.now() - t0 < 1000) {
+    await new Promise((r) => requestAnimationFrame(r));
+    if (g.p.dir !== last && g.p.dir >= 0) { changes++; last = g.p.dir; }
+    const k = g.p.ty * 100 + g.p.tx;
+    if (k !== lastT) { tiles++; lastT = k; }
+  }
+  return { changes, tiles };
+});
+wiggle = false;
+await shake;
 await p.mouse.up();
-out.diagonal = { want: diagWant, at: await p.evaluate(() => [window.game.g.p.tx, window.game.g.p.ty]), expect: "want 3, x=4 y<3" };
+out.diagonal = { want: diagWant, ...trace, at: await p.evaluate(() => [window.game.g.p.tx, window.game.g.p.ty]), expect: "want 3, 1 change (the turn), >=2 tiles" };
 await p.evaluate(() => { const g = window.game.g; g.newStage(3); g.ghosts = []; g.stageTime = 5; g.p = { tx: 3, ty: 3, dir: 0, t: 0.3 }; g.input.want = -1; });
 await p.mouse.move(100, 650);
 await p.mouse.down();
