@@ -24,6 +24,7 @@ export const T = {
 
   // player
   PLAYER_SPEED: 5.2, // tiles/s
+  CORNER_TOL: 0.3, // tiles: a turn pushed this late (already past the tile center) still takes the branch
   PLAYER_EAT_SLOW: 0.85, // speed multiplier while the tile ahead still has a pellet (ghosts gain on you while you eat)
   LIVES: 3,
   HIT_DIST: 0.6, // tiles, ghost touch

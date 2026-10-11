@@ -16,7 +16,8 @@ const PUZZLE_KEY = "tomoshibi-meiro-puzzle-v1"; // highest puzzle stage cleared
 const DEF = { perf: -1, knobs: KNOB_DEFAULT }; // perf: -1 = auto, 0..4 = fixed tier. knobs: index into KNOBS[i].vals
 const HUD_CSS = 54; // css px kept free above the maze
 const STICK_R = 50; // css px: knob travel
-const STICK_DEAD = 12; // css px: no direction inside this
+const STICK_DEAD = 8; // css px: no direction inside this
+const TURN_GRACE_MS = 200; // a direction stays wanted this long after letting go (quick flicks still turn)
 const STICK_AREA = 0.6; // a press left of this fraction of the screen width grabs the stick
 
 type Toast = { id: number; text: string; color: string };
@@ -155,22 +156,31 @@ export default function Page() {
       if (!(e.code in KEYS)) return;
       const i = held.indexOf(KEYS[e.code]);
       if (i >= 0) held.splice(i, 1);
-      g.input.want = held.length ? held[held.length - 1] : -1;
+      if (held.length) g.input.want = held[held.length - 1];
+      else letGo();
     };
     window.addEventListener("keydown", kd);
     window.addEventListener("keyup", ku);
 
     // stick: press anywhere on the left part of the screen, that point is the stick's center while held
     let st: { id: number; x: number; y: number } | null = null;
-    const pick = (dx: number, dy: number, cur: number) => {
+    const pick = (dx: number, dy: number) => {
       if (Math.hypot(dx, dy) < STICK_DEAD) return -1;
-      if (cur >= 0) {
-        // keep the current direction unless the other axis clearly wins (no flicker on diagonals)
-        const along = cur === 0 ? dx : cur === 2 ? -dx : cur === 1 ? dy : -dy;
-        const across = cur === 0 || cur === 2 ? Math.abs(dy) : Math.abs(dx);
-        if (along > 0 && along >= across * 0.8) return cur;
+      const h = dx > 0 ? 0 : 2;
+      const v = dy > 0 ? 1 : 3;
+      // a diagonal push: the axis the player is not already moving along wins (= the turn you are asking for)
+      const moving = g.p.dir;
+      if (Math.min(Math.abs(dx), Math.abs(dy)) > STICK_DEAD * 1.5) {
+        if (moving === h) return v;
+        if (moving === v) return h;
       }
-      return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 0 : 2) : dy > 0 ? 1 : 3;
+      return Math.abs(dx) > Math.abs(dy) ? h : v;
+    };
+    let graceT = 0;
+    const letGo = () => {
+      const w = g.input.want;
+      clearTimeout(graceT);
+      graceT = window.setTimeout(() => { if (!st && !held.length && g.input.want === w) g.input.want = -1; }, TURN_GRACE_MS);
     };
     const onDown = (e: PointerEvent) => {
       if (e.pointerType === "touch") setTouch(true);
@@ -184,13 +194,13 @@ export default function Page() {
       let dy = e.clientY - st.y;
       const l = Math.hypot(dx, dy);
       if (l > STICK_R) { dx = (dx / l) * STICK_R; dy = (dy / l) * STICK_R; }
-      g.input.want = pick(dx, dy, g.input.want);
+      g.input.want = pick(dx, dy);
       setStick({ x: st.x, y: st.y, dx, dy });
     };
     const onUp = (e: PointerEvent) => {
       if (!st || e.pointerId !== st.id) return;
       st = null;
-      g.input.want = -1;
+      letGo();
       setStick(null);
     };
     canvas.addEventListener("pointerdown", onDown);

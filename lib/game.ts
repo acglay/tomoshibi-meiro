@@ -576,6 +576,11 @@ export class Game {
     // player
     const I = this.input;
     const p = this.p;
+    // cornering: just past a branch, a turn snaps back to the tile center and takes it
+    if (I.want >= 0 && p.dir >= 0 && I.want !== p.dir && I.want !== REV[p.dir] && p.t > 0 && p.t <= T.CORNER_TOL && this.playerOk(p.tx + DX[I.want], p.ty + DY[I.want])) {
+      p.t = 0;
+      p.dir = I.want;
+    }
     if (I.want >= 0 && p.dir >= 0 && I.want === REV[p.dir]) {
       // reverse at once, mid-tile
       if (p.t < 1e-6) p.dir = -1;
